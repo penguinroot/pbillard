@@ -2,6 +2,7 @@ import math
 import tkinter as tk
 import time
 from PIL import Image, ImageTk
+
 class Bille:
     def __init__(self, canevas, numero, x, y, rayon, couleur):
         self.canevas = canevas
@@ -15,7 +16,8 @@ class Bille:
         self.vx = 0.0
         self.vy = 0.0
         self.trail_ids = []
-        self.reflection_id = None  # Initialize reflection_id
+        self.reflection_id = None
+        self.dans_trou = False
 
     def dessiner(self):
         self.id = self.canevas.create_oval(
@@ -41,7 +43,7 @@ class Bille:
     def mettre_a_jour_position(self, x, y):
         for trail_id in self.trail_ids:
             self.canevas.delete(trail_id)
-        self.trail_ids = [] 
+        self.trail_ids = []
         if abs(self.vx) > 2 or abs(self.vy) > 2:
             trail = self.canevas.create_oval(
                 self.x - self.rayon//2, self.y - self.rayon//2,
@@ -55,13 +57,6 @@ class Bille:
         self.canevas.coords(self.id, x - self.rayon, y - self.rayon, x + self.rayon, y + self.rayon)
         self.canevas.coords(self.text_id, x, y)
         self.canevas.coords(self.shadow_id, x + 1, y + 1)
-
-        reflet_rayon = self.rayon // 2
-        x1 = x - reflet_rayon + 3
-        y1 = y - reflet_rayon + 3
-        x2 = x - (reflet_rayon // 2)
-        y2 = y - (reflet_rayon // 2)
-        self.canevas.coords(self.reflection_id, x1, y1, x2, y2)
 
 class Canne:
     def __init__(self, canevas, bille, joueur_actuel):
@@ -77,7 +72,7 @@ class Canne:
         self.couleur = "red" if joueur_actuel == 1 else "orange"
         self.label_info = tk.Label(self.canevas, text='Hello', bg='#2C3E50', fg='white', font=("Arial", 14, "bold"),
                                     relief="solid", bd=0, highlightthickness=3, highlightbackground="#34495E", highlightcolor="#34495E")
-        self.label_info.place(x=720, y=50 ,anchor="ne")
+        self.label_info.place(x=720, y=50, anchor="ne")
 
     def dessiner(self):
         if self.id:
@@ -329,18 +324,33 @@ class JeuDeBillard:
 
     def mettre_a_jour_physique(self):
         en_mouvement = False
+        billes_a_supprimer = []
+        
         for bille in self.billes:
             bille.vx *= 0.99
             bille.vy *= 0.99
             nouvelle_x = bille.x + bille.vx
             nouvelle_y = bille.y + bille.vy
+            
             vx, vy = self.verifier_collision(bille, bille.vx, bille.vy)
             bille.vx, bille.vy = vx, vy
+            
+            # Vérifier si la bille doit être supprimée
+            if bille.dans_trou:
+                billes_a_supprimer.append(bille)
+                continue  # Ne pas mettre à jour la position
+            
             if bille in self.billes:
                 bille.mettre_a_jour_position(nouvelle_x, nouvelle_y)
                 if abs(bille.vx) > 1 or abs(bille.vy) > 1:
                     en_mouvement = True
+        
+        # Supprimer les billes tombées dans les trous
+        for bille in billes_a_supprimer:
+            self.gestion_bille_tombee(bille)
+        
         self.verifier_collisions_billes()
+        
         if en_mouvement and not self.en_pause:
             self.after_id = self.racine.after(20, self.mettre_a_jour_physique)
         else:
@@ -351,6 +361,7 @@ class JeuDeBillard:
             for bille in self.billes:
                 bille.vx = 0.0
                 bille.vy = 0.0
+                bille.dans_trou = False  # Réinitialiser le drapeau
             if self.bille_blanche and self.bille_blanche in self.billes:
                 self.canne = Canne(self.canevas, self.bille_blanche, self.joueur_actuel)
                 self.configurer_controles()
@@ -360,6 +371,8 @@ class JeuDeBillard:
         y1 = bille.y - bille.rayon
         x2 = bille.x + bille.rayon
         y2 = bille.y + bille.rayon
+        
+        # Collisions avec les murs
         if x1 <= self.marge:
             vx = abs(vx)
         elif x2 >= self.largeur - self.marge:
@@ -368,51 +381,61 @@ class JeuDeBillard:
             vy = abs(vy)
         elif y2 >= self.hauteur - self.marge:
             vy = -abs(vy)
+        
+        # Collisions avec les trous
         for tx, ty in self.trous:
             distance = math.hypot(bille.x - tx, bille.y - ty)
             if distance < self.rayon_bille * 1.5:
-                self.canevas.delete(bille.id)
-                self.canevas.delete(bille.text_id)
-                self.canevas.delete(bille.shadow_id)
-                if bille == self.bille_blanche:
-                    self.billes.remove(bille)
-                    self.bille_blanche = None
-                    self.faute = True
-                    self.joueur_actuel = 2 if self.joueur_actuel == 1 else 1
-                    self.en_placement_apres_faute = True
-                    self.show_custom_message('Info', f"Joueur {self.joueur_actuel}, placez la bille blanche")
-                    self.canevas.bind("<Button-1>", self.placer_bille_blanche)
-                    return vx, vy
-                elif bille.couleur == "black":
-                    billes_restantes = [b for b in self.billes if b != self.bille_blanche and b.couleur != "black"]
-                    if len(billes_restantes) == 0:
-                        self.show_custom_message("Victoire", f"Joueur {self.joueur_actuel} gagne !")
-                    else:
-                        self.show_custom_message("Défaite", f"Joueur {self.joueur_actuel} perd !")
-                    time.sleep(2)
-                    self.racine.destroy()
-                    return vx, vy
-                else:
-                    if self.joueur_actuel == 1:
-                        self.points_j1 += 1
-                    else:
-                        self.points_j2 += 1
-                    self.billes_tombees_tour.append(bille)
-                    self.billes.remove(bille)
-                    self.billes_tombees.append(bille)
-                    xdep = 925
-                    ydep = 40
-                    self.canevas.delete("billes_tombees")
-                    for i, b in enumerate(self.billes_tombees):
-                        self.canevas.create_oval(
-                            xdep + i*30 - self.rayon_bille,
-                            ydep - self.rayon_bille,
-                            xdep + i*30 + self.rayon_bille,
-                            ydep + self.rayon_bille,
-                            fill=b.couleur,
-                            tags="billes_tombees"
-                        )
+                bille.dans_trou = True
+                break
+        
         return vx, vy
+
+    def gestion_bille_tombee(self, bille):
+        """Gère une bille tombée dans un trou"""
+        self.canevas.delete(bille.id)
+        self.canevas.delete(bille.text_id)
+        self.canevas.delete(bille.shadow_id)
+        
+        if bille == self.bille_blanche:
+            self.billes.remove(bille)
+            self.bille_blanche = None
+            self.faute = True
+            self.joueur_actuel = 2 if self.joueur_actuel == 1 else 1
+            self.en_placement_apres_faute = True
+            self.show_custom_message('Info', f"Joueur {self.joueur_actuel}, placez la bille blanche")
+            self.canevas.bind("<Button-1>", self.placer_bille_blanche)
+            
+        elif bille.couleur == "black":
+            billes_restantes = [b for b in self.billes if b != self.bille_blanche and b.couleur != "black"]
+            if len(billes_restantes) == 0:
+                self.show_custom_message("Victoire", f"Joueur {self.joueur_actuel} gagne !")
+            else:
+                self.show_custom_message("Défaite", f"Joueur {self.joueur_actuel} perd !")
+            time.sleep(2)
+            self.racine.destroy()
+            
+        else:
+            if self.joueur_actuel == 1:
+                self.points_j1 += 1
+            else:
+                self.points_j2 += 1
+            self.billes_tombees_tour.append(bille)
+            self.billes.remove(bille)
+            self.billes_tombees.append(bille)
+            
+            xdep = 925
+            ydep = 40
+            self.canevas.delete("billes_tombees")
+            for i, b in enumerate(self.billes_tombees):
+                self.canevas.create_oval(
+                    xdep + i*30 - self.rayon_bille,
+                    ydep - self.rayon_bille,
+                    xdep + i*30 + self.rayon_bille,
+                    ydep + self.rayon_bille,
+                    fill=b.couleur,
+                    tags="billes_tombees"
+                )
 
     def verifier_collisions_billes(self):
         for i in range(len(self.billes)):
